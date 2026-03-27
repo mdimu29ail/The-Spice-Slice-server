@@ -12,9 +12,9 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 // `https://my-assignment-11-server-lac.vercel.app/foods?email=${user.email}`
 app.use(
   cors({
-    origin: ['http://localhost:3000'],
+    origin: ['https://spice-slice.vercel.app'],
     credentials: true,
-  })
+  }),
 );
 app.use(express.json());
 
@@ -156,7 +156,7 @@ async function run() {
 
             if (!foodId) {
               console.warn(
-                `Application with _id ${application._id} is missing foodId.`
+                `Application with _id ${application._id} is missing foodId.`,
               );
               return { ...application, foodDetailsMissing: true };
             }
@@ -169,7 +169,7 @@ async function run() {
             } catch (error) {
               console.error(
                 `Error creating ObjectId for foodId '${foodId}' in application _id ${application._id}:`,
-                error
+                error,
               );
               return { ...application, invalidFoodIdFormat: true };
             }
@@ -186,14 +186,14 @@ async function run() {
               application.foodDetails = { _id: food._id };
             } else {
               console.warn(
-                `Food with ID ${foodId} not found for application _id ${application._id}.`
+                `Food with ID ${foodId} not found for application _id ${application._id}.`,
               );
 
               application.foodNotFound = true;
             }
 
             return application;
-          })
+          }),
         );
 
         res.send(populatedApplications);
@@ -275,7 +275,7 @@ async function run() {
 
     await client.db('admin').command({ ping: 1 });
     console.log(
-      'Pinged your deployment. You successfully connected to MongoDB!'
+      'Pinged your deployment. You successfully connected to MongoDB!',
     );
   } finally {
     // Ensures that the client will close when you finish/error
