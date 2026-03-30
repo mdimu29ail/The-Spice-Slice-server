@@ -23,7 +23,10 @@ const supabase = createClient(
 // ৩. মিডলওয়্যার সেটআপ
 app.use(
   cors({
-    origin: ['http://localhost:5173', 'https://spice-slice.vercel.app'],
+    origin: [
+      'http://localhost:5173',
+      'https://the-spice-slice-clicent.vercel.app',
+    ],
     credentials: true,
   }),
 );
