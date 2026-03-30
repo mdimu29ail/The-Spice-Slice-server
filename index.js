@@ -1,289 +1,249 @@
 const express = require('express');
-const app = express();
-const port = process.env.PORT || 3000;
 const cors = require('cors');
 const dotenv = require('dotenv');
-
-const jwt = require('jsonwebtoken');
 const cookieParser = require('cookie-parser');
+const { createClient } = require('@supabase/supabase-js');
+const stripe = require('stripe');
 
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-// middle ware
-// `https://my-assignment-11-server-lac.vercel.app/foods?email=${user.email}`
+// ১. কনফিগারেশন লোড করা
+dotenv.config();
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// ২. ক্লায়েন্ট ইনিশিয়ালাইজেশন
+// নিশ্চিত করুন আপনার .env ফাইলে এই কি (Keys) গুলো আছে
+const stripeClient = stripe(process.env.STRIPE_SECRET_KEY);
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY, // এর মাধ্যমে ব্যাকএন্ড থেকে সরাসরি অ্যাডমিন কাজ করা যাবে
+);
+
+// ৩. মিডলওয়্যার সেটআপ
 app.use(
   cors({
-    origin: ['https://spice-slice.vercel.app'],
+    origin: ['http://localhost:5173', 'https://spice-slice.vercel.app'],
     credentials: true,
   }),
 );
 app.use(express.json());
-
 app.use(cookieParser());
 
-const logger = (req, res, next) => {
-  console.log('inside the logger');
-  next();
-};
-
-const verifyToken = (req, res, next) => {
-  const token = req?.cookies?.token;
-  console.log('cookie in middleware', token);
-
-  if (!token) {
-    return res
-      .status(401)
-      .send({ message: 'Authorization failed: No token provided' });
-  }
-  jwt.verify(token, process.env.JWT_ACCESS_SECRET, (err, decoded) => {
-    if (err) {
-      return res
-        .status(401)
-        .send({ message: 'Authorization failed: Invalid token' });
-    }
-    req.decoded = decoded;
-    next();
+// ৪. কাস্টম এরর হ্যান্ডলার ফাংশন
+const sendError = (res, err) => {
+  console.error('🔥 Server Error:', err.message || err);
+  res.status(err.status || 400).send({
+    success: false,
+    message: err.message || 'An unexpected error occurred',
+    error: err,
   });
 };
 
-dotenv.config();
-if (!process.env.MONGODB_USER || !process.env.MONGODB_PASS) {
-  console.error('MONGODB_USER and MONGODB_PASS must be set in .env file');
-  process.exit(1);
-}
+// --- ৫. ROUTES: FOOD MANAGEMENT ---
 
-app.get('/', (req, res) => {
-  res.send('Hello World!!!!!!!!!');
-});
-
-const uri = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASS}@cluster0.lvqirhw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
-});
-
-async function run() {
+// সব খাবার পাওয়া (Home/Menu Page)
+app.get('/foods', async (req, res) => {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
-    const foodsCollection = client.db('foodsDB').collection('foods');
-    const applicationCollection = client
-      .db('foodsDB')
-      .collection('applications');
-    // Send a ping to confirm a successful connection
-
-    app.post('/jwt', async (req, res) => {
-      const userData = req.body;
-
-      const token = jwt.sign(userData, process.env.JWT_ACCESS_SECRET, {
-        expiresIn: '1d',
-      });
-      res.cookie('token', token, {
-        httpOnly: true,
-        secure: false,
-      });
-
-      res.send({ success: true });
-    });
-
-    app.get('/foods', async (req, res) => {
-      const cursor = foodsCollection.find();
-      const result = await cursor.toArray();
-      res.send(result);
-    });
-
-    app.get('/foods/:id', async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await foodsCollection.findOne(query);
-      res.send(result);
-
-      console.log(objectId(id));
-    });
-
-    // app.get('/applications', async (req, res) => {
-    //   const email = req.query.email;
-    //   const query = {
-    //     applicant: email,
-    //   };
-
-    //   const result = await applicationCollection.find(query).toArray();
-
-    //   for (const application of result) {
-    //     const foodsId = application.foodId;
-    //     const foodQuery = { _id: new ObjectId(foodsId) };
-    //     const food = await foodsCollection.findOne(foodQuery);
-
-    //     application.name = food.name;
-    //     application.category = food.category;
-    //     application.image_url = food.image_url;
-    //     application.price_usd = food.price_usd;
-    //     application.rating = food.rating;
-    //     application.cuisine = food.cuisine;
-    //     application.description = food.description;
-    //     application.purchase_count = food.purchase_count;
-    //   }
-
-    //   res.send(result);
-    // });
-
-    app.get('/applications', logger, verifyToken, async (req, res) => {
-      const email = req.query.email;
-
-      if (email !== req.decoded.email) {
-        return res.status(403).send({ message: 'forbidden Access' });
-      }
-      if (!email) {
-        return res
-          .status(400)
-          .send({ message: 'Email query parameter is required.' });
-      }
-
-      const query = {
-        applicant: email,
-      };
-
-      try {
-        const applications = await applicationCollection.find(query).toArray();
-
-        const populatedApplications = await Promise.all(
-          applications.map(async application => {
-            const foodId = application.foodId;
-
-            if (!foodId) {
-              console.warn(
-                `Application with _id ${application._id} is missing foodId.`,
-              );
-              return { ...application, foodDetailsMissing: true };
-            }
-
-            let food = null;
-            try {
-              const foodObjectId = new ObjectId(foodId);
-              const foodQuery = { _id: foodObjectId };
-              food = await foodsCollection.findOne(foodQuery);
-            } catch (error) {
-              console.error(
-                `Error creating ObjectId for foodId '${foodId}' in application _id ${application._id}:`,
-                error,
-              );
-              return { ...application, invalidFoodIdFormat: true };
-            }
-
-            if (food) {
-              application.name = food.name;
-              application.category = food.category;
-              application.image_url = food.image_url;
-              application.price_usd = food.price_usd;
-              application.rating = food.rating;
-              application.cuisine = food.cuisine;
-              application.description = food.description;
-              application.purchase_count = food.purchase_count;
-              application.foodDetails = { _id: food._id };
-            } else {
-              console.warn(
-                `Food with ID ${foodId} not found for application _id ${application._id}.`,
-              );
-
-              application.foodNotFound = true;
-            }
-
-            return application;
-          }),
-        );
-
-        res.send(populatedApplications);
-      } catch (error) {
-        console.error('Error fetching applications or food data:', error);
-        res
-          .status(500)
-          .send({ message: 'An error occurred while fetching applications.' });
-      }
-    });
-
-    app.get('/foods', async (req, res) => {
-      const email = req.query.email;
-      if (!email)
-        return res.status(400).send({ error: 'Email query is required' });
-
-      const result = await foodsCollection.find({ createdBy: email }).toArray();
-      res.send(result);
-    });
-
-    app.post('/foods', async (req, res) => {
-      const newJobs = req.body;
-
-      const result = await foodsCollection.insertOne(newJobs);
-
-      res.send(result);
-    });
-
-    app.post('/applications', async (req, res) => {
-      const application = req.body;
-      const result = await applicationCollection.insertOne(application);
-      res.send(result);
-    });
-
-    app.delete('/applications/:id', async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-
-      const result = await applicationCollection.deleteOne(query);
-
-      res.send(result);
-    });
-
-    // Example Express route to delete food by ID permanently
-
-    app.delete('/foods/:id', async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await foodsCollection.deleteOne(query);
-
-      console.log(result);
-      if (result.deletedCount === 0) {
-        return res.status(404).send({ message: 'Food not found' });
-      }
-      res.send(result);
-    });
-
-    app.patch('/foods/:id', async (req, res) => {
-      const id = req.params.id;
-      const updatedFood = req.body;
-
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: {
-          name: updatedFood.name,
-          category: updatedFood.category,
-          image_url: updatedFood.image_url,
-          price_usd: updatedFood.price_usd,
-          rating: updatedFood.rating,
-          cuisine: updatedFood.cuisine,
-          description: updatedFood.description,
-          quantity: updatedFood.quantity,
-        },
-      };
-
-      const result = await foodsCollection.updateOne(query, updateDoc);
-      res.send(result);
-    });
-
-    await client.db('admin').command({ ping: 1 });
-    console.log(
-      'Pinged your deployment. You successfully connected to MongoDB!',
-    );
-  } finally {
-    // Ensures that the client will close when you finish/error
-    // await client.close();
+    const { data, error } = await supabase
+      .from('foods')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.send(data);
+  } catch (err) {
+    sendError(res, err);
   }
-}
-run().catch(console.dir);
+});
+
+// নির্দিষ্ট খাবার পাওয়া (Details Page)
+app.get('/foods/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('foods')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (error)
+      return res.status(404).send({ message: 'Masterpiece not found' });
+    res.send(data);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// ইউজারের নিজের খাবার দেখা (My Foods/Admin Manage)
+app.get('/my-foods', async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) throw new Error('Email is required');
+    const { data, error } = await supabase
+      .from('foods')
+      .select('*')
+      .eq('created_by_email', email);
+    if (error) throw error;
+    res.send(data);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// নতুন খাবার যোগ করা (Admin)
+app.post('/foods', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('foods')
+      .insert([req.body])
+      .select();
+    if (error) throw error;
+    res.send({ success: true, data });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// খাবার আপডেট করা (Edit/Refine)
+app.patch('/foods/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('foods')
+      .update(req.body)
+      .eq('id', id)
+      .select();
+    if (error) throw error;
+    res.send({ success: true, data });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// খাবার ডিলিট করা
+app.delete('/foods/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { error } = await supabase.from('foods').delete().eq('id', id);
+    if (error) throw error;
+    res.send({ success: true, message: 'Delicacy removed successfully' });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// --- ৬. ROUTES: ORDER & STRIPE PAYMENT ---
+
+// Stripe Payment Intent তৈরি করা
+app.post('/create-payment-intent', async (req, res) => {
+  try {
+    const { price } = req.body;
+    if (!price || isNaN(price))
+      return res.status(400).send({ error: 'Valid price is required' });
+
+    // ১. সেন্টে রূপান্তর (Integer এ রাউন্ড করা জরুরি)
+    const amount = Math.round(parseFloat(price) * 100);
+
+    if (amount < 50)
+      return res.status(400).send({ error: 'Minimum amount is $0.50' });
+
+    const paymentIntent = await stripeClient.paymentIntents.create({
+      amount: amount,
+      currency: 'usd',
+      payment_method_types: ['card'],
+    });
+
+    res.send({ clientSecret: paymentIntent.client_secret });
+  } catch (err) {
+    console.error('❌ Stripe Error:', err.message);
+    res.status(500).send({ error: err.message });
+  }
+});
+
+// অর্ডারের ডাটা সেভ করা (Checkout সফল হলে)
+// backend/index.js এর ভেতরে /applications রুটটি আপডেট করুন
+
+// backend/index.js এর ভেতরে অর্ডার সেভ করার অংশ
+// backend/index.js এর পেমেন্ট সাকসেস লজিক
+app.post('/applications', async (req, res) => {
+  try {
+    const orderData = {
+      ...req.body,
+      status: 'paid', // নিশ্চিত করুন স্ট্যাটাসটি 'paid'
+      created_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('applications')
+      .insert([orderData]);
+
+    if (error) throw error;
+    res.status(201).send({ success: true, data });
+  } catch (err) {
+    res.status(400).send({ error: err.message });
+  }
+});
+// ইউজারের সব অর্ডার দেখা (Dashboard - Ledger/Purchase List)
+app.get('/applications', async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) return res.status(400).send({ error: 'Patron email required' });
+
+    const { data, error } = await supabase
+      .from('applications')
+      .select('*, foods (*)') // Relational Join
+      .eq('applicant_email', email)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.send(data);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// অ্যাডমিনের জন্য সব অর্ডার দেখা (Admin Control)
+app.get('/admin/all-orders', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('applications')
+      .select('*, foods (*)')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.send(data);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// অর্ডার ডিলিট করা
+// backend/index.js
+app.delete('/applications/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Supabase এ ডিলিট কমান্ড
+    const { data, error } = await supabase
+      .from('applications')
+      .delete()
+      .eq('id', id); // এখানে id চেক করুন, আপনার কলাম নাম 'id' নাকি '_id'
+
+    if (error) throw error;
+
+    res.send({
+      success: true,
+      message: 'Transaction removed from boutique ledger',
+    });
+  } catch (err) {
+    res.status(400).send({ success: false, error: err.message });
+  }
+});
+
+// --- ৭. SERVER START ---
+app.get('/', (req, res) =>
+  res.send('💎 The Spice-Slice Boutique Server is Running...'),
+);
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
+  console.log(`🚀 Boutique Server active on port ${port}`);
 });
